@@ -1,0 +1,2218 @@
+{
+  "info": {
+    "name": "LinkedIn-style Job Search & Candidate Matching Engine",
+    "description": "End-to-end tests for the Spring Boot project. Start the app first, then run the folders in order (Collection Runner / Newman).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "seedCandidateId",
+      "value": "1"
+    },
+    {
+      "key": "runTag",
+      "value": "zz0"
+    },
+    {
+      "key": "newCandidateId",
+      "value": ""
+    },
+    {
+      "key": "jobId",
+      "value": ""
+    },
+    {
+      "key": "messageId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Smoke & Docs",
+      "item": [
+        {
+          "name": "OpenAPI docs reachable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v3",
+                "api-docs"
+              ]
+            },
+            "description": "If this fails the app is not running on {{baseUrl}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"API title present\", () => pm.expect(pm.response.json().info.title).to.include(\"Job Search\"));",
+                  "pm.test(\"Trace id echoed in response header\", () => pm.response.to.have.header(\"X-Trace-Id\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Seeded candidate #1 exists",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{seedCandidateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{seedCandidateId}}"
+              ]
+            },
+            "description": "Confirms the demo data seeder ran. Seeded ids: 1 Priya, 2 Rahul, 3 Ananya, 4 Karan, 5 Sneha, 6 Vikram, 7 Meera, 8 Arjun."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Seed data loaded (Priya Nair)\", () => pm.expect(pm.response.json().fullName).to.eql(\"Priya Nair\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. L1 Boolean Search",
+      "item": [
+        {
+          "name": "Recruiter query from the spec",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "AND of company, (title OR title), skill and the 'immediate joiner' flag.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND (\\\"Talent Acquisition\\\" OR \\\"Recruiter\\\") AND \\\"Java\\\" AND \\\"Immediate Joiner\\\"\",\n  \"requiredSkills\": [\n    \"Java\"\n  ],\n  \"recruiterId\": 101,\n  \"pageSize\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Exactly one match: Priya Nair\", () => {",
+                  "  pm.expect(body.l1Matches).to.eql(1);",
+                  "  pm.expect(body.results).to.have.lengthOf(1);",
+                  "  pm.expect(body.results[0].fullName).to.eql(\"Priya Nair\");",
+                  "});",
+                  "pm.test(\"Score in [0,1] with 4-signal breakdown\", () => {",
+                  "  const r = body.results[0];",
+                  "  pm.expect(r.score).to.be.within(0, 1);",
+                  "  pm.expect(Object.keys(r.scoreBreakdown)).to.have.members([\"skillMatch\", \"inMailResponse\", \"openToWork\", \"freshness\"]);",
+                  "});",
+                  "pm.test(\"tookMs and searchId present\", () => { pm.expect(body.tookMs).to.be.a(\"number\"); pm.expect(body.searchId).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same query without Immediate Joiner (3 hits, ranked)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "Shows L2 reranking: Ananya has the best skill match but is not open to work, so she is ranked last.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND (\\\"Talent Acquisition\\\" OR \\\"Recruiter\\\") AND \\\"Java\\\"\",\n  \"requiredSkills\": [\n    \"Java\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Matches Priya, Rahul, Ananya\", () => pm.expect(names).to.eql([\"Ananya Rao\", \"Priya Nair\", \"Rahul Mehta\"]));",
+                  "pm.test(\"Results are sorted by score descending\", () => { const s = body.results.map(r => r.score); pm.expect(s).to.eql([...s].sort((a, b) => b - a)); });",
+                  "pm.test(\"Priya ranks first (open to work + immediate joiner)\", () => pm.expect(body.results[0].fullName).to.eql(\"Priya Nair\"));",
+                  "pm.test(\"Ananya ranks last (not open to work)\", () => pm.expect(body.results[2].fullName).to.eql(\"Ananya Rao\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "NOT operator",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND NOT \\\"Immediate Joiner\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Returns Rahul and Ananya only\", () => pm.expect(names).to.eql([\"Ananya Rao\", \"Rahul Mehta\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Implicit AND (adjacent words)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "Two bare words with no operator are ANDed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java recruiter\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Returns Rahul and Ananya\", () => pm.expect(names).to.eql([\"Ananya Rao\", \"Rahul Mehta\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Precedence: AND binds tighter than OR",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"Google\\\" OR \\\"Amazon\\\" AND \\\"Docker\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Karan (Google) and Vikram (Amazon+Docker)\", () => pm.expect(names).to.eql([\"Karan Shah\", \"Vikram Singh\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Single term (java) - paging",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java\",\n  \"pageSize\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"6 candidates know Java, only 2 returned\", () => {",
+                  "  pm.expect(body.l1Matches).to.eql(6);",
+                  "  pm.expect(body.afterFilters).to.eql(6);",
+                  "  pm.expect(body.results).to.have.lengthOf(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filters: location + open-to-work",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java\",\n  \"location\": \"Mumbai\",\n  \"openToWorkOnly\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Mumbai candidates open to work\", () => pm.expect(names).to.eql([\"Arjun Das\", \"Priya Nair\", \"Rahul Mehta\"]));",
+                  "pm.test(\"L1 saw 6, filters kept 3\", () => { pm.expect(body.l1Matches).to.eql(6); pm.expect(body.afterFilters).to.eql(3); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter: max notice period 10 days",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java\",\n  \"location\": \"Mumbai\",\n  \"openToWorkOnly\": true,\n  \"maxNoticePeriodDays\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Only immediate joiners / <=10 days\", () => pm.expect(names).to.eql([\"Arjun Das\", \"Priya Nair\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No matches",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"COBOL\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Empty result set, still 200\", () => { const b = pm.response.json(); pm.expect(b.l1Matches).to.eql(0); pm.expect(b.results).to.have.lengthOf(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: malformed query (dangling parenthesis)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND (\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem detail explains the parse error\", () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.title).to.eql(\"Invalid Boolean query\");",
+                  "  pm.expect(b.detail).to.include(\"position\");",
+                  "  pm.expect(b.traceId).to.be.a(\"string\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: unterminated quote",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"Java AND Spring\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Unterminated phrase reported\", () => pm.expect(pm.response.json().detail).to.include(\"Unterminated\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: blank query (bean validation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Validation error on 'query'\", () => { const b = pm.response.json(); pm.expect(b.title).to.eql(\"Validation failed\"); pm.expect(b.errors).to.have.property(\"query\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: pageSize out of range",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java\",\n  \"pageSize\": 500\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Validation error on 'pageSize'\", () => pm.expect(pm.response.json().errors).to.have.property(\"pageSize\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. L2 Reranking (skill companions)",
+      "item": [
+        {
+          "name": "Companion skill credit (Spring Boot implies Java)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "Formula: SkillMatch = avg over queried skills of (1 if held, else 0.8 * best companion affinity).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"Spring Boot\\\"\",\n  \"requiredSkills\": [\n    \"Java\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const names = body.results.map(r => r.fullName).sort();",
+                  "pm.test(\"Rahul, Karan, Vikram have Spring Boot\", () => pm.expect(names).to.eql([\"Karan Shah\", \"Rahul Mehta\", \"Vikram Singh\"]));",
+                  "const byName = Object.fromEntries(body.results.map(r => [r.fullName, r]));",
+                  "pm.test(\"Karan/Rahul hold both skills: skillMatch = 1.0\", () => {",
+                  "  pm.expect(byName[\"Karan Shah\"].scoreBreakdown.skillMatch).to.be.closeTo(1.0, 0.001);",
+                  "  pm.expect(byName[\"Rahul Mehta\"].scoreBreakdown.skillMatch).to.be.closeTo(1.0, 0.001);",
+                  "});",
+                  "pm.test(\"Vikram has no Java: (0.9*0.8 + 1.0)/2 = 0.86\", () => pm.expect(byName[\"Vikram Singh\"].scoreBreakdown.skillMatch).to.be.closeTo(0.86, 0.001));",
+                  "pm.test(\"Vikram matchedSkills lists only direct matches\", () => pm.expect(byName[\"Vikram Singh\"].matchedSkills).to.eql([\"Spring Boot\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Score breakdown contract",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"java\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Results are sorted by score descending\", () => { const s = body.results.map(r => r.score); pm.expect(s).to.eql([...s].sort((a, b) => b - a)); });",
+                  "pm.test(\"Every signal is within [0,1]\", () => body.results.forEach(r => {",
+                  "  pm.expect(r.score).to.be.within(0, 1);",
+                  "  Object.values(r.scoreBreakdown).forEach(v => pm.expect(v).to.be.within(0, 1));",
+                  "}));",
+                  "pm.test(\"Not-open-to-work candidate gets openToWork = 0.1\", () => {",
+                  "  const ananya = body.results.find(r => r.fullName === \"Ananya Rao\");",
+                  "  pm.expect(ananya.scoreBreakdown.openToWork).to.be.closeTo(0.1, 0.001);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Profile Ingestion & Index Freshness",
+      "item": [
+        {
+          "name": "Create candidate (indexed immediately)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Test User\",\n  \"headline\": \"Rust and Kafka engineer\",\n  \"currentCompany\": \"Acme{{runTag}}\",\n  \"currentTitle\": \"Staff Engineer\",\n  \"location\": \"Chennai\",\n  \"openToWork\": true,\n  \"immediateJoiner\": false,\n  \"noticePeriodDays\": 30,\n  \"skills\": [\"Rust\", \"Kafka\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runTag', 'zz' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"Id assigned and profile timestamps set\", () => { pm.expect(b.id).to.be.a(\"number\"); pm.expect(b.profileUpdatedAt).to.be.a(\"string\"); });",
+                  "pm.collectionVariables.set(\"newCandidateId\", b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New candidate is searchable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"query\": \"\\\"acme{{runTag}}\\\" AND rust\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Found by company + skill\", () => { pm.expect(body.results).to.have.lengthOf(1); pm.expect(body.results[0].candidateId).to.eql(parseInt(pm.collectionVariables.get(\"newCandidateId\"))); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update candidate (re-index)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{newCandidateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{newCandidateId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Test User\",\n  \"headline\": \"Rust and Kafka engineer\",\n  \"currentCompany\": \"Globex{{runTag}}\",\n  \"currentTitle\": \"Staff Engineer\",\n  \"location\": \"Chennai\",\n  \"openToWork\": true,\n  \"immediateJoiner\": true,\n  \"noticePeriodDays\": 0,\n  \"skills\": [\"Rust\", \"Kafka\", \"Java\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Company updated\", () => pm.expect(pm.response.json().currentCompany).to.eql(\"Globex\" + pm.collectionVariables.get(\"runTag\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Old company no longer matches",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"query\": \"\\\"acme{{runTag}}\\\"\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Stale index entry removed\", () => pm.expect(pm.response.json().l1Matches).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "New company matches",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"query\": \"\\\"globex{{runTag}}\\\" AND \\\"immediate joiner\\\"\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Re-indexed with new terms\", () => pm.expect(pm.response.json().l1Matches).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get candidate",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{newCandidateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{newCandidateId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Skills persisted\", () => pm.expect(pm.response.json().skills).to.include.members([\"Rust\", \"Kafka\", \"Java\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: create with blank fullName",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"\",\n  \"skills\": [\n    \"Java\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Validation error on fullName\", () => pm.expect(pm.response.json().errors).to.have.property(\"fullName\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: candidate not found",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Problem detail\", () => pm.expect(pm.response.json().title).to.eql(\"Resource not found\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Engagement Feedback Loop (run in order)",
+      "description": "Requires app.kafka.publish-enabled=false (in-process dispatch) OR Kafka running (then add a 2-3 second wait before each GET).",
+      "item": [
+        {
+          "name": "4.1 Baseline features of candidate 1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{seedCandidateId}}/features",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{seedCandidateId}}",
+                "features"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const f = pm.response.json();",
+                  "pm.collectionVariables.set(\"baseReceived\", f.inMailsReceived);",
+                  "pm.collectionVariables.set(\"baseResponded\", f.inMailsResponded);",
+                  "pm.collectionVariables.set(\"baseSession\", f.sessionActivity);",
+                  "pm.test(\"Feature set returned for candidate 1\", () => pm.expect(f.candidateId).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 Search BEFORE (store Priya's inMailResponse score)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND \\\"Talent Acquisition\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json().results.find(x => x.fullName === \"Priya Nair\");",
+                  "pm.test(\"Priya present\", () => pm.expect(r).to.exist);",
+                  "pm.collectionVariables.set(\"scoreBefore\", r.scoreBreakdown.inMailResponse);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 InMail SENT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"INMAIL_SENT\",\n  \"candidateId\": {{seedCandidateId}},\n  \"recruiterId\": 101,\n  \"messageId\": \"{{messageId}}\",\n  \"occurredAt\": \"{{sentAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"messageId\", \"msg-\" + Date.now());",
+                  "pm.collectionVariables.set(\"sentAt\", new Date(Date.now() - 3 * 3600 * 1000).toISOString());",
+                  "pm.collectionVariables.set(\"respondedAt\", new Date(Date.now() - 1 * 3600 * 1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"Event id assigned\", () => pm.expect(pm.response.json().eventId).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.4 InMail RESPONDED (2 hours later)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"INMAIL_RESPONDED\",\n  \"candidateId\": {{seedCandidateId}},\n  \"recruiterId\": 101,\n  \"messageId\": \"{{messageId}}\",\n  \"occurredAt\": \"{{respondedAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.5 Features AFTER response",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{seedCandidateId}}/features",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{seedCandidateId}}",
+                "features"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const f = pm.response.json();",
+                  "const baseR = parseInt(pm.collectionVariables.get(\"baseReceived\"));",
+                  "const baseP = parseInt(pm.collectionVariables.get(\"baseResponded\"));",
+                  "pm.test(\"received +1\", () => pm.expect(f.inMailsReceived).to.eql(baseR + 1));",
+                  "pm.test(\"responded +1\", () => pm.expect(f.inMailsResponded).to.eql(baseP + 1));",
+                  "if (baseP === 0) { pm.test(\"first reply: average response = 2.0 hours\", () => pm.expect(f.avgResponseHours).to.be.closeTo(2.0, 0.05)); }",
+                  "pm.collectionVariables.set(\"afterResponded\", f.inMailsResponded);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.6 Duplicate RESPONDED (idempotency)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"INMAIL_RESPONDED\",\n  \"candidateId\": {{seedCandidateId}},\n  \"recruiterId\": 101,\n  \"messageId\": \"{{messageId}}\",\n  \"occurredAt\": \"{{respondedAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.7 Counters unchanged after duplicate",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{seedCandidateId}}/features",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{seedCandidateId}}",
+                "features"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"responded count not incremented twice\", () => pm.expect(pm.response.json().inMailsResponded).to.eql(parseInt(pm.collectionVariables.get(\"afterResponded\"))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.8 Search AFTER - responsiveness score rose",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND \\\"Talent Acquisition\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json().results.find(x => x.fullName === \"Priya Nair\");",
+                  "const before = parseFloat(pm.collectionVariables.get(\"scoreBefore\"));",
+                  "pm.test(\"inMailResponse increased (\" + before.toFixed(3) + \" -> \" + r.scoreBreakdown.inMailResponse.toFixed(3) + \")\", () => pm.expect(r.scoreBreakdown.inMailResponse).to.be.above(before));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.9 Session activity (+1.0)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"type\": \"SESSION_ACTIVITY\", \"candidateId\": {{seedCandidateId}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.10 Profile viewed (+0.25)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"type\": \"PROFILE_VIEWED\", \"candidateId\": {{seedCandidateId}}, \"recruiterId\": 101 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.11 Session score updated",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/candidates/{{seedCandidateId}}/features",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "candidates",
+                "{{seedCandidateId}}",
+                "features"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const base = parseFloat(pm.collectionVariables.get(\"baseSession\"));",
+                  "pm.test(\"sessionActivity = baseline + 1.25\", () => pm.expect(pm.response.json().sessionActivity).to.be.closeTo(base + 1.25, 0.001));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: event without type",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/engagement/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "engagement",
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"candidateId\": 1 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Validation error on type\", () => pm.expect(pm.response.json().errors).to.have.property(\"type\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Job Postings & Candidate Matching",
+      "item": [
+        {
+          "name": "Create job posting",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Senior Java Engineer\",\n  \"company\": \"Acme\",\n  \"location\": \"Bengaluru\",\n  \"description\": \"Build payment microservices\",\n  \"minExperienceYears\": 5,\n  \"recruiterId\": 101,\n  \"requiredSkills\": [\n    \"Java\",\n    \"Spring Boot\",\n    \"Microservices\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"Job created and active\", () => { pm.expect(j.id).to.be.a(\"number\"); pm.expect(j.active).to.eql(true); });",
+                  "pm.collectionVariables.set(\"jobId\", j.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get job posting",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs/{{jobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{jobId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Skills stored\", () => pm.expect(pm.response.json().requiredSkills).to.have.members([\"Java\", \"Spring Boot\", \"Microservices\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Match candidates to job",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs/{{jobId}}/matches?size=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{jobId}}",
+                "matches"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Only Bengaluru candidates are returned\", () => body.results.forEach(r => pm.expect(r.location).to.include(\"Bengaluru\")));",
+                  "pm.test(\"Karan Shah (Java+Spring Boot+Microservices) ranks first\", () => pm.expect(body.results[0].fullName).to.eql(\"Karan Shah\"));",
+                  "pm.test(\"Ananya Rao also matches (Java only, lower score)\", () => {",
+                  "  const a = body.results.find(r => r.fullName === \"Ananya Rao\");",
+                  "  pm.expect(a).to.exist;",
+                  "  pm.expect(a.score).to.be.below(body.results[0].score);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: job validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"\",\n  \"company\": \"Acme\",\n  \"requiredSkills\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Errors for title and requiredSkills\", () => { const e = pm.response.json().errors; pm.expect(e).to.have.property(\"title\"); pm.expect(e).to.have.property(\"requiredSkills\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR: job not found",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Admin",
+      "item": [
+        {
+          "name": "Rebuild L1 index from DB",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/index/rebuild",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "index",
+                "rebuild"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"At least the 8 seeded candidates re-indexed\", () => pm.expect(pm.response.json().indexedCandidates).to.be.at.least(8));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search still works after rebuild",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Trace-Id",
+                "value": "pm-{{$timestamp}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/search/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "search",
+                "candidates"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\\\"JPMorgan\\\" AND \\\"Immediate Joiner\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Priya still found\", () => pm.expect(pm.response.json().results.map(r => r.fullName)).to.include(\"Priya Nair\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

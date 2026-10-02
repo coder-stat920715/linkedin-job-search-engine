@@ -1,0 +1,73 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: linkedin-job-search-engine
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:h2:mem:jobsearch;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate.jdbc.batch_size: 50
+  h2:
+    console:
+      enabled: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 500ms
+      connect-timeout: 1s
+  kafka:
+    bootstrap-servers: localhost:9092
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  kafka:
+    engagement-topic: candidate-engagement-events
+    group-id: l2-feature-updater
+    listener-enabled: true      # false = do not start the Kafka consumer
+    publish-enabled: true       # false = engagement API dispatches events in-process (no broker needed)
+  feature-store:
+    ttl-minutes: 10
+  search:
+    l1-max-candidates: 2000
+    l2-max-candidates: 500
+    companion-discount: 0.8
+    weights:
+      skill-match: 0.40         # w1
+      in-mail-response: 0.30    # w2
+      open-to-work: 0.20        # w3
+      freshness: 0.10           # w4
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-}]"
+  level:
+    com.example.jobsearch: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: jdbc:postgresql://localhost:5432/jobsearch
+    username: jobsearch
+    password: jobsearch
+    driver-class-name: org.postgresql.Driver
+  h2:
+    console:
+      enabled: false
